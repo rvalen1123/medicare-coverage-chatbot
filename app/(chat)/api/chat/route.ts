@@ -58,28 +58,41 @@ export async function POST(request: Request) {
     const { id, message, selectedChatModel, selectedVisibilityType } =
       requestBody;
 
-    const session = await auth();
+    // Try to get the session, but proceed even if no session is found
+    const session = await auth().catch(() => null);
 
-    if (!session?.user) {
-      return new Response('Unauthorized', { status: 401 });
-    }
+    // Create a guest user if no authenticated session exists
+    const userSession = session || {
+      user: {
+        id: `guest-${generateUUID()}`,
+        name: 'Guest User',
+        email: `guest-${Date.now()}@example.com`,
+        image: null,
+        type: 'free' as UserType
+      },
+      expires: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString()
+    };
 
-    const userType: UserType = session.user.type;
+    // Set a default user type for guests
+    const userType: UserType = userSession.user.type || 'free';
 
     // Wrap database calls in try/catch blocks to handle potential MongoDB connection issues
     try {
-      const messageCount = await getMessageCountByUserId({
-        id: session.user.id,
-        differenceInHours: 24,
-      });
+      // Only check message limits for authenticated users
+      if (session?.user?.id) {
+        const messageCount = await getMessageCountByUserId({
+          id: session.user.id,
+          differenceInHours: 24,
+        });
 
-      if (messageCount > entitlementsByUserType[userType].maxMessagesPerDay) {
-        return new Response(
-          'You have exceeded your maximum number of messages for the day! Please try again later.',
-          {
-            status: 429,
-          },
-        );
+        if (messageCount > entitlementsByUserType[userType].maxMessagesPerDay) {
+          return new Response(
+            'You have exceeded your maximum number of messages for the day! Please try again later.',
+            {
+              status: 429,
+            },
+          );
+        }
       }
     } catch (error) {
       console.error('Error checking message count:', error);
@@ -103,7 +116,7 @@ export async function POST(request: Request) {
 
         await saveChat({
           id,
-          userId: session.user.id,
+          userId: userSession.user.id,
           title,
           visibility: selectedVisibilityType,
         });
@@ -112,7 +125,8 @@ export async function POST(request: Request) {
         // Continue even if we can't save the chat
       }
     } else {
-      if (chat.userId !== session.user.id) {
+      // Skip ownership check for guest users
+      if (session?.user?.id && chat.userId !== session.user.id) {
         return new Response('Forbidden', { status: 403 });
       }
     }
@@ -186,47 +200,45 @@ export async function POST(request: Request) {
           experimental_generateMessageId: generateUUID,
           tools: {
             getWeather,
-            createDocument: createDocument({ session, dataStream }),
-            updateDocument: updateDocument({ session, dataStream }),
+            createDocument: createDocument({ session: userSession, dataStream }),
+            updateDocument: updateDocument({ session: userSession, dataStream }),
             requestSuggestions: requestSuggestions({
-              session,
+              session: userSession,
               dataStream,
             }),
           },
           onFinish: async ({ response }) => {
-            if (session.user?.id) {
-              try {
-                const assistantId = getTrailingMessageId({
-                  messages: response.messages.filter(
-                    (message) => message.role === 'assistant',
-                  ),
-                });
+            try {
+              const assistantId = getTrailingMessageId({
+                messages: response.messages.filter(
+                  (message) => message.role === 'assistant',
+                ),
+              });
 
-                if (!assistantId) {
-                  throw new Error('No assistant message found!');
-                }
-
-                const [, assistantMessage] = appendResponseMessages({
-                  messages: [message],
-                  responseMessages: response.messages,
-                });
-
-                await saveMessages({
-                  messages: [
-                    {
-                      id: assistantId,
-                      chatId: id,
-                      role: assistantMessage.role,
-                      parts: assistantMessage.parts,
-                      attachments:
-                        assistantMessage.experimental_attachments ?? [],
-                      createdAt: new Date(),
-                    },
-                  ],
-                });
-              } catch (error) {
-                console.error('Failed to save chat:', error);
+              if (!assistantId) {
+                throw new Error('No assistant message found!');
               }
+
+              const [, assistantMessage] = appendResponseMessages({
+                messages: [message],
+                responseMessages: response.messages,
+              });
+
+              await saveMessages({
+                messages: [
+                  {
+                    id: assistantId,
+                    chatId: id,
+                    role: assistantMessage.role,
+                    parts: assistantMessage.parts,
+                    attachments:
+                      assistantMessage.experimental_attachments ?? [],
+                    createdAt: new Date(),
+                  },
+                ],
+              });
+            } catch (error) {
+              console.error('Failed to save chat:', error);
             }
           },
           experimental_telemetry: {

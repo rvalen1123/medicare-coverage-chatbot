@@ -13,6 +13,13 @@ export async function middleware(request: NextRequest) {
     return new Response('pong', { status: 200 });
   }
 
+  // Skip authentication for all routes except admin functions
+  // This makes the chatbot publicly accessible
+  if (!pathname.startsWith('/admin')) {
+    return NextResponse.next();
+  }
+
+  // For admin routes, keep the authentication
   if (pathname.startsWith('/api/auth')) {
     return NextResponse.next();
   }
@@ -23,11 +30,11 @@ export async function middleware(request: NextRequest) {
     secureCookie: !isDevelopmentEnvironment,
   });
 
-  if (!token) {
+  if (!token && pathname.startsWith('/admin')) {
     const redirectUrl = encodeURIComponent(request.url);
 
     return NextResponse.redirect(
-      new URL(`/api/auth/guest?redirectUrl=${redirectUrl}`, request.url),
+      new URL(`/login?redirectUrl=${redirectUrl}`, request.url),
     );
   }
 
@@ -47,6 +54,7 @@ export const config = {
     '/api/:path*',
     '/login',
     '/register',
+    '/admin/:path*',
 
     /*
      * Match all request paths except for the ones starting with:

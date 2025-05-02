@@ -3,5 +3,5 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "pnpm start:simple"
+startCommand = "pnpm start"
 restartPolicyType = "ON_FAILURE" 
