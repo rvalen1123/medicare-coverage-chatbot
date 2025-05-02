@@ -31,7 +31,7 @@ export const Greeting = () => {
         transition={{ delay: 0.7 }}
         className="mt-4 text-sm text-zinc-400"
       >
-        Examples: "What is an LCD?", "Is physical therapy covered by Medicare?", "What's the coverage policy for cardiac rehabilitation?"
+        Examples: &quot;What is an LCD?&quot;, &quot;Is physical therapy covered by Medicare?&quot;, &quot;What&apos;s the coverage policy for cardiac rehabilitation?&quot;
       </motion.div>
     </div>
   );
