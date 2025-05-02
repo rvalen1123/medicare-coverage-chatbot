@@ -1,6 +1,7 @@
 {
-  "name": "ai-chatbot",
-  "version": "3.0.17",
+  "name": "medicare-coverage-chatbot",
+  "version": "1.0.0",
+  "description": "A simple Medicare coverage policy assistant for healthcare providers and administrative staff",
   "private": true,
   "scripts": {
     "dev": "next dev --turbo",
