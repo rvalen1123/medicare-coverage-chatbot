@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "next dev --turbo",
     "build": "next build",
+    "build:no-lint": "NEXT_DISABLE_ESLINT=1 next build",
     "debug-build": "DEBUG=* next build",
     "start": "next start",
     "poststart": "tsx lib/db/migrate",
