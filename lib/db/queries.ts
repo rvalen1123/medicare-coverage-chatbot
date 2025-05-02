@@ -32,13 +32,20 @@ import type { ArtifactKind } from '@/components/artifact';
 import { generateUUID } from '../utils';
 import { generateHashedPassword } from './utils';
 import type { VisibilityType } from '@/components/visibility-selector';
+import { DATABASE_URL } from '../constants';
 
 // Optionally, if not using email/pass login, you can
 // use the Drizzle adapter for Auth.js / NextAuth
 // https://authjs.dev/reference/adapter/drizzle
 
+// Use DATABASE_URL from constants that supports MONGO_URI as fallback
+const connectionString = DATABASE_URL || process.env.POSTGRES_URL;
+if (!connectionString) {
+  console.warn('No database connection string provided. Check your environment variables.');
+}
+
 // biome-ignore lint: Forbidden non-null assertion.
-const client = postgres(process.env.POSTGRES_URL!);
+const client = postgres(connectionString!);
 const db = drizzle(client);
 
 export async function getUser(email: string): Promise<Array<User>> {

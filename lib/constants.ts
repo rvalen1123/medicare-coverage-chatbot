@@ -11,3 +11,13 @@ export const isTestEnvironment = Boolean(
 export const guestRegex = /^guest-\d+$/;
 
 export const DUMMY_PASSWORD = generateDummyPassword();
+
+// Database connection
+export const DATABASE_URL = process.env.MONGO_URI || process.env.DATABASE_URL || '';
+
+// Medicare-specific settings
+export const MEDICARE_TITLE = process.env.NEXT_PUBLIC_TITLE || 'Medicare Coverage Assistant';
+export const DEFAULT_SYSTEM_PROMPT = process.env.DEFAULT_SYSTEM_PROMPT || 'You are a Medicare Coverage Assistant';
+
+// Guest access
+export const ALLOW_GUEST_ACCESS = process.env.NEXT_PUBLIC_GUEST_KEY === 'true';

@@ -23,7 +23,7 @@ import { createDocument } from '@/lib/ai/tools/create-document';
 import { updateDocument } from '@/lib/ai/tools/update-document';
 import { requestSuggestions } from '@/lib/ai/tools/request-suggestions';
 import { getWeather } from '@/lib/ai/tools/get-weather';
-import { isProductionEnvironment } from '@/lib/constants';
+import { isProductionEnvironment, DATABASE_URL } from '@/lib/constants';
 import { myProvider } from '@/lib/ai/providers';
 import { entitlementsByUserType } from '@/lib/ai/entitlements';
 import { postRequestBodySchema, type PostRequestBody } from './schema';
@@ -38,13 +38,19 @@ const streamContext = createResumableStreamContext({
   waitUntil: after,
 });
 
+// Check if database connection is available
+if (!DATABASE_URL) {
+  console.warn('No database URL found. Chat functionality may be limited.');
+}
+
 export async function POST(request: Request) {
   let requestBody: PostRequestBody;
 
   try {
     const json = await request.json();
     requestBody = postRequestBodySchema.parse(json);
-  } catch (_) {
+  } catch (error) {
+    console.error('Invalid request body:', error);
     return new Response('Invalid request body', { status: 400 });
   }
 
@@ -60,40 +66,64 @@ export async function POST(request: Request) {
 
     const userType: UserType = session.user.type;
 
-    const messageCount = await getMessageCountByUserId({
-      id: session.user.id,
-      differenceInHours: 24,
-    });
+    // Wrap database calls in try/catch blocks to handle potential MongoDB connection issues
+    try {
+      const messageCount = await getMessageCountByUserId({
+        id: session.user.id,
+        differenceInHours: 24,
+      });
 
-    if (messageCount > entitlementsByUserType[userType].maxMessagesPerDay) {
-      return new Response(
-        'You have exceeded your maximum number of messages for the day! Please try again later.',
-        {
-          status: 429,
-        },
-      );
+      if (messageCount > entitlementsByUserType[userType].maxMessagesPerDay) {
+        return new Response(
+          'You have exceeded your maximum number of messages for the day! Please try again later.',
+          {
+            status: 429,
+          },
+        );
+      }
+    } catch (error) {
+      console.error('Error checking message count:', error);
+      // Continue even if we can't check message count
     }
 
-    const chat = await getChatById({ id });
+    let chat: Chat | undefined;
+    
+    try {
+      chat = await getChatById({ id });
+    } catch (error) {
+      console.error('Error getting chat by ID:', error);
+      // Continue with null chat
+    }
 
     if (!chat) {
-      const title = await generateTitleFromUserMessage({
-        message,
-      });
+      try {
+        const title = await generateTitleFromUserMessage({
+          message,
+        });
 
-      await saveChat({
-        id,
-        userId: session.user.id,
-        title,
-        visibility: selectedVisibilityType,
-      });
+        await saveChat({
+          id,
+          userId: session.user.id,
+          title,
+          visibility: selectedVisibilityType,
+        });
+      } catch (error) {
+        console.error('Error saving chat:', error);
+        // Continue even if we can't save the chat
+      }
     } else {
       if (chat.userId !== session.user.id) {
         return new Response('Forbidden', { status: 403 });
       }
     }
 
-    const previousMessages = await getMessagesByChatId({ id });
+    let previousMessages = [];
+    try {
+      previousMessages = await getMessagesByChatId({ id });
+    } catch (error) {
+      console.error('Error getting previous messages:', error);
+      // Continue with empty messages
+    }
 
     const messages = appendClientMessage({
       // @ts-expect-error: todo add type conversion from DBMessage[] to UIMessage[]
@@ -110,21 +140,31 @@ export async function POST(request: Request) {
       country,
     };
 
-    await saveMessages({
-      messages: [
-        {
-          chatId: id,
-          id: message.id,
-          role: 'user',
-          parts: message.parts,
-          attachments: message.experimental_attachments ?? [],
-          createdAt: new Date(),
-        },
-      ],
-    });
+    try {
+      await saveMessages({
+        messages: [
+          {
+            chatId: id,
+            id: message.id,
+            role: 'user',
+            parts: message.parts,
+            attachments: message.experimental_attachments ?? [],
+            createdAt: new Date(),
+          },
+        ],
+      });
+    } catch (error) {
+      console.error('Error saving message:', error);
+      // Continue even if we can't save the message
+    }
 
     const streamId = generateUUID();
-    await createStreamId({ streamId, chatId: id });
+    try {
+      await createStreamId({ streamId, chatId: id });
+    } catch (error) {
+      console.error('Error creating stream ID:', error);
+      // Continue even if we can't create stream ID
+    }
 
     const stream = createDataStream({
       execute: (dataStream) => {
@@ -184,8 +224,8 @@ export async function POST(request: Request) {
                     },
                   ],
                 });
-              } catch (_) {
-                console.error('Failed to save chat');
+              } catch (error) {
+                console.error('Failed to save chat:', error);
               }
             }
           },
@@ -201,7 +241,8 @@ export async function POST(request: Request) {
           sendReasoning: true,
         });
       },
-      onError: () => {
+      onError: (error) => {
+        console.error('Stream error:', error);
         return 'Oops, an error occurred!';
       },
     });
@@ -209,7 +250,8 @@ export async function POST(request: Request) {
     return new Response(
       await streamContext.resumableStream(streamId, () => stream),
     );
-  } catch (_) {
+  } catch (error) {
+    console.error('Request processing error:', error);
     return new Response('An error occurred while processing your request!', {
       status: 500,
     });
@@ -234,7 +276,8 @@ export async function GET(request: Request) {
 
   try {
     chat = await getChatById({ id: chatId });
-  } catch {
+  } catch (error) {
+    console.error('Error getting chat by ID:', error);
     return new Response('Not found', { status: 404 });
   }
 
@@ -248,56 +291,41 @@ export async function GET(request: Request) {
 
   const streamIds = await getStreamIdsByChatId({ chatId });
 
-  if (!streamIds.length) {
-    return new Response('No streams found', { status: 404 });
-  }
-
-  const recentStreamId = streamIds.at(-1);
-
-  if (!recentStreamId) {
-    return new Response('No recent stream found', { status: 404 });
-  }
-
-  const emptyDataStream = createDataStream({
-    execute: () => {},
-  });
-
-  return new Response(
-    await streamContext.resumableStream(recentStreamId, () => emptyDataStream),
-    {
-      status: 200,
-    },
-  );
+  return Response.json({ streamIds });
 }
 
 export async function DELETE(request: Request) {
   const { searchParams } = new URL(request.url);
-  const id = searchParams.get('id');
+  const chatId = searchParams.get('id');
 
-  if (!id) {
-    return new Response('Not Found', { status: 404 });
+  if (!chatId) {
+    return new Response('id is required', { status: 400 });
   }
 
   const session = await auth();
 
-  if (!session?.user?.id) {
+  if (!session?.user) {
     return new Response('Unauthorized', { status: 401 });
   }
 
+  const chat = await getChatById({ id: chatId });
+
+  if (!chat) {
+    return new Response('Not found', { status: 404 });
+  }
+
+  if (chat.userId !== session.user.id) {
+    return new Response('Forbidden', { status: 403 });
+  }
+
   try {
-    const chat = await getChatById({ id });
-
-    if (chat.userId !== session.user.id) {
-      return new Response('Forbidden', { status: 403 });
-    }
-
-    const deletedChat = await deleteChatById({ id });
-
-    return Response.json(deletedChat, { status: 200 });
+    await deleteChatById({ id: chatId });
   } catch (error) {
-    console.error(error);
-    return new Response('An error occurred while processing your request!', {
+    console.error('Error deleting chat:', error);
+    return new Response('An error occurred while deleting your chat!', {
       status: 500,
     });
   }
+
+  return new Response(null, { status: 204 });
 }
