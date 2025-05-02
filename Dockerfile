@@ -1,45 +1,24 @@
-FROM node:18-alpine AS base
+FROM node:18-alpine
 
-# Set pnpm version explicitly
-ENV PNPM_VERSION=9.12.3
-
-# Install dependencies first in a separate layer
-FROM base AS deps
 WORKDIR /app
 
-# Install pnpm using a direct method - no caching for reliability
-RUN npm install -g pnpm@${PNPM_VERSION}
+# Install pnpm
+RUN npm install -g pnpm@9.12.3
 
-# Copy only package files first for better caching
+# Copy package files
 COPY package.json pnpm-lock.yaml* ./
 
-# Install dependencies without using external cache mounting
-RUN pnpm install --frozen-lockfile --prefer-offline
+# Install dependencies without frozen lockfile
+RUN pnpm install
 
-# Build the application
-FROM base AS builder
-WORKDIR /app
-
-# Install pnpm again in the builder stage
-RUN npm install -g pnpm@${PNPM_VERSION}
-
-# Copy deps from previous stage
-COPY --from=deps /app/node_modules ./node_modules
+# Copy the rest of the application
 COPY . .
 
-# Build the application without database migrations
+# Build the application
 RUN pnpm run build
 
-# Production image
-FROM base AS runner
-WORKDIR /app
-ENV NODE_ENV production
+# Expose the port
+EXPOSE 3000
 
-# Copy necessary files from builder
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./package.json
-
-# Command to run the application
-CMD ["npm", "run", "start"] 
+# Start the application
+CMD ["pnpm", "start"] 
